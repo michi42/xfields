@@ -43,19 +43,46 @@ void BeamBeamBiGaussianMultibunch2D_track_local_particle(
         // If `zeta_period` > 0 the bunch-label axis is periodic (circular
         // machine): the distance is evaluated modulo the period, so encounter
         // offsets that wrap around the ring still find their partner.
+        // The opposing bunches are stored SORTED in zeta (enforced by
+        // `update_from_other_beam`), so the partner is found by binary search:
+        // the nearest (mod period) bunch is either a linear neighbour of the
+        // folded target or, across the wrap, one of the two ends.
         double const target_zeta = zeta + zeta_offset;
         int64_t i_match = -1;
         double best_dist = zeta_match_tol;
-        for (int64_t jj = 0; jj < num_other_bunches; jj++){
-            double const zj = BeamBeamBiGaussianMultibunch2DData_get_other_beam_zeta(el, jj);
-            double dist = zj - target_zeta;
+        if (num_other_bunches > 0){
+            double tt = target_zeta;
             if (zeta_period > 0.){
-                dist -= zeta_period * round(dist / zeta_period);
+                double const z_first = BeamBeamBiGaussianMultibunch2DData_get_other_beam_zeta(el, 0);
+                double const z_last = BeamBeamBiGaussianMultibunch2DData_get_other_beam_zeta(
+                                                el, num_other_bunches - 1);
+                double const z_mid = 0.5 * (z_first + z_last);
+                tt -= zeta_period * round((tt - z_mid) / zeta_period);
             }
-            dist = fabs(dist);
-            if (dist <= best_dist){
-                best_dist = dist;
-                i_match = jj;
+            int64_t lo = 0;                      // lower bound: first z >= tt
+            int64_t hi = num_other_bunches;
+            while (lo < hi){
+                int64_t const mid = (lo + hi) / 2;
+                if (BeamBeamBiGaussianMultibunch2DData_get_other_beam_zeta(el, mid) < tt){
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            int64_t const cand[4] = {lo - 1, lo, 0, num_other_bunches - 1};
+            for (int cc = 0; cc < 4; cc++){
+                int64_t const jj = cand[cc];
+                if (jj < 0 || jj >= num_other_bunches) continue;
+                double dist = BeamBeamBiGaussianMultibunch2DData_get_other_beam_zeta(el, jj)
+                              - target_zeta;
+                if (zeta_period > 0.){
+                    dist -= zeta_period * round(dist / zeta_period);
+                }
+                dist = fabs(dist);
+                if (dist <= best_dist){
+                    best_dist = dist;
+                    i_match = jj;
+                }
             }
         }
 

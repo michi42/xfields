@@ -222,11 +222,15 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
                 f'The opposing beam has {n} bunches but the element was '
                 f'allocated for {capacity}. Increase `num_bunches`.')
 
+        # The tracking kernel finds the encounter partner by binary search, so
+        # the bunches are stored sorted in zeta.
+        order = np.argsort(zeta, kind='stable')
+
         self.num_other_bunches = n
-        self.other_beam_zeta[:n] = self._arr2ctx(zeta)
-        self.other_beam_x[:n] = self._arr2ctx(x)
-        self.other_beam_y[:n] = self._arr2ctx(y)
-        self.other_beam_num_particles[:n] = self._arr2ctx(weight)
+        self.other_beam_zeta[:n] = self._arr2ctx(zeta[order])
+        self.other_beam_x[:n] = self._arr2ctx(x[order])
+        self.other_beam_y[:n] = self._arr2ctx(y[order])
+        self.other_beam_num_particles[:n] = self._arr2ctx(weight[order])
 
     def get_sigma_x(self):
         """Per-bunch horizontal size sigma_x of the opposing bunches."""
