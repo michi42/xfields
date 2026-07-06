@@ -22,7 +22,6 @@ void BeamBeamBiGaussianMultibunch2D_track_local_particle(
 
     double const other_beam_q0 = scale_strength*BeamBeamBiGaussianMultibunch2DData_get_other_beam_q0(el);
     double const other_beam_beta0 = BeamBeamBiGaussianMultibunch2DData_get_other_beam_beta0(el);
-    double const other_beam_gamma0 = BeamBeamBiGaussianMultibunch2DData_get_other_beam_gamma0(el);
 
     double const min_sigma_diff = BeamBeamBiGaussianMultibunch2DData_get_min_sigma_diff(el);
 
@@ -96,15 +95,11 @@ void BeamBeamBiGaussianMultibunch2D_track_local_particle(
         double const other_beam_num_particles =
             BeamBeamBiGaussianMultibunch2DData_get_other_beam_num_particles(el, i_match);
 
-        // Per-bunch transverse size from normalized emittance and beta:
-        //   sigma = sqrt(beta_twiss * nemitt / gamma_rel)
-        double const nemitt_x = BeamBeamBiGaussianMultibunch2DData_get_other_beam_nemitt_x(el, i_match);
-        double const nemitt_y = BeamBeamBiGaussianMultibunch2DData_get_other_beam_nemitt_y(el, i_match);
-        double const betx = BeamBeamBiGaussianMultibunch2DData_get_other_beam_betx(el, i_match);
-        double const bety = BeamBeamBiGaussianMultibunch2DData_get_other_beam_bety(el, i_match);
-
-        double const sigma_x = sqrt(betx * nemitt_x / other_beam_gamma0);
-        double const sigma_y = sqrt(bety * nemitt_y / other_beam_gamma0);
+        // Per-bunch transverse size (effective Gaussian size of the
+        // interaction, set by the user -- e.g. the convolved size of the
+        // colliding bunch pair)
+        double const sigma_x = BeamBeamBiGaussianMultibunch2DData_get_other_beam_sigma_x(el, i_match);
+        double const sigma_y = BeamBeamBiGaussianMultibunch2DData_get_other_beam_sigma_y(el, i_match);
 
         double const x_bar = x - other_beam_shift_x;
         double const y_bar = y - other_beam_shift_y;

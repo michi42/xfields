@@ -18,7 +18,6 @@ XFIELDS_ELEMENTS_INIT_DEFAULTS = {
         'num_bunches': 1,
         'other_beam_q0': 1.,
         'other_beam_beta0': 1.,
-        'other_beam_gamma0': 1.,
     },
     'BeamBeamBiGaussian3D': {
         'slices_other_beam_zeta_center': np.array([0]),
