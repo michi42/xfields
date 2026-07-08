@@ -23,6 +23,10 @@ void BeamBeamBiGaussianMultibunch2D_track_local_particle(
     double const other_beam_q0 = scale_strength*BeamBeamBiGaussianMultibunch2DData_get_other_beam_q0(el);
     double const other_beam_beta0 = BeamBeamBiGaussianMultibunch2DData_get_other_beam_beta0(el);
 
+    int64_t const coherent = BeamBeamBiGaussianMultibunch2DData_get_coherent(el);
+    double const own_sigma_x = BeamBeamBiGaussianMultibunch2DData_get_sigma_x(el);
+    double const own_sigma_y = BeamBeamBiGaussianMultibunch2DData_get_sigma_y(el);
+
     double const min_sigma_diff = BeamBeamBiGaussianMultibunch2DData_get_min_sigma_diff(el);
 
     int64_t const num_other_bunches = BeamBeamBiGaussianMultibunch2DData_get_num_other_bunches(el);
@@ -95,11 +99,15 @@ void BeamBeamBiGaussianMultibunch2D_track_local_particle(
         double const other_beam_num_particles =
             BeamBeamBiGaussianMultibunch2DData_get_other_beam_num_particles(el, i_match);
 
-        // Per-bunch transverse size (effective Gaussian size of the
-        // interaction, set by the user -- e.g. the convolved size of the
-        // colliding bunch pair)
-        double const sigma_x = BeamBeamBiGaussianMultibunch2DData_get_other_beam_sigma_x(el, i_match);
-        double const sigma_y = BeamBeamBiGaussianMultibunch2DData_get_other_beam_sigma_y(el, i_match);
+        // Per-bunch transverse size of the opposing bunch. In the coherent
+        // (rigid-bunch) mode the effective Gaussian size is the convolution
+        // with this beam's own size at the encounter.
+        double sigma_x = BeamBeamBiGaussianMultibunch2DData_get_other_beam_sigma_x(el, i_match);
+        double sigma_y = BeamBeamBiGaussianMultibunch2DData_get_other_beam_sigma_y(el, i_match);
+        if (coherent){
+            sigma_x = sqrt(sigma_x*sigma_x + own_sigma_x*own_sigma_x);
+            sigma_y = sqrt(sigma_y*sigma_y + own_sigma_y*own_sigma_y);
+        }
 
         double const x_bar = x - other_beam_shift_x;
         double const y_bar = y - other_beam_shift_y;

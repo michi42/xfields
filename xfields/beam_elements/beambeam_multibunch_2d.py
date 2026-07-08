@@ -18,11 +18,14 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
     The opposing beam is described as a set of bunches, each one represented
     by a single macroparticle holding the bunch centroid (``x``, ``y``), its
     longitudinal position (``zeta``), its population (number of real charges)
-    and its transverse sizes (``sigma_x``, ``sigma_y``). The kick on a bunch
-    of this beam is the field of a Gaussian charge distribution with those
-    sizes -- for a coherent (rigid-bunch) model pass the CONVOLVED size of
-    the colliding bunch pair, ``sigma = sqrt(sigma_weak**2 +
-    sigma_strong**2)``.
+    and its transverse sizes (``other_beam_sigma_x``, ``other_beam_sigma_y``).
+
+    With ``coherent=False`` (incoherent, weak-strong) the kick is the field
+    of a Gaussian charge distribution with the opposing bunch's own sizes.
+    With ``coherent=True`` (rigid-bunch dipole model) the effective Gaussian
+    size is the CONVOLUTION of the pair, ``sqrt(sigma_own**2 +
+    sigma_other**2)``, computed from this beam's own sizes at the element
+    (``sigma_x``, ``sigma_y``, required in this mode).
 
     During tracking, a particle (bunch) of this beam located at ``zeta``
     interacts with the opposing bunch located at ``zeta + zeta_offset``. The
@@ -41,6 +44,10 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
 
         'other_beam_q0': xo.Float64,
         'other_beam_beta0': xo.Float64,
+
+        'coherent': xo.Int64,
+        'sigma_x': xo.Float64,
+        'sigma_y': xo.Float64,
 
         'min_sigma_diff': xo.Float64,
 
@@ -71,6 +78,10 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
                     other_beam_q0=0,
                     other_beam_beta0=1,
 
+                    coherent=False,
+                    sigma_x=None,
+                    sigma_y=None,
+
                     other_particles=None,
 
                     other_beam_sigma_x=None,
@@ -100,6 +111,14 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
             other_beam_q0 (float): Charge sign of the opposing beam. -1 for
                 electrons, +1 for protons or positrons.
             other_beam_beta0 (float): Relativistic beta of the opposing beam.
+            coherent (bool): If False (default, incoherent weak-strong) the
+                kick uses each opposing bunch's own sizes and ``sigma_x``/
+                ``sigma_y`` are ignored. If True (coherent rigid-bunch
+                model) the effective size is the convolution
+                ``sqrt(sigma_own**2 + sigma_other**2)`` and ``sigma_x``/
+                ``sigma_y`` are required.
+            sigma_x, sigma_y (float): Transverse sizes of this (the tracked)
+                beam at the element, used only with ``coherent=True``.
             other_particles (xpart.Particles): Particles object of the opposing
                 beam in which each active macroparticle represents one bunch.
                 Its centroids (``x``, ``y``), longitudinal positions (``zeta``)
@@ -109,8 +128,7 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
             other_beam_sigma_x, other_beam_sigma_y (float or float array):
                 Transverse sizes of each opposing bunch (aligned with the
                 active particles of ``other_particles``). A scalar is
-                broadcast to all bunches. For a coherent rigid-bunch model
-                pass the convolved size of the colliding pair.
+                broadcast to all bunches.
             min_sigma_diff (float): Round-beam kick (~2x faster) is used instead
                 of the elliptical kick if
                 ``fabs(sigma_x - sigma_y) < min_sigma_diff``.
@@ -154,13 +172,22 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
         self.other_beam_q0 = other_beam_q0
         self.other_beam_beta0 = other_beam_beta0
 
+        if coherent and (sigma_x is None or sigma_y is None):
+            raise ValueError(
+                '`sigma_x` and `sigma_y` (own beam sizes) are required for '
+                'the coherent (rigid-bunch) mode.')
+        self.coherent = bool(coherent)
+        self.sigma_x = 0. if sigma_x is None else sigma_x
+        self.sigma_y = 0. if sigma_y is None else sigma_y
+
         self.min_sigma_diff = min_sigma_diff
 
         self.num_other_bunches = 0
         if other_particles is not None:
-            self.update_from_other_beam(other_particles,
-                                        sigma_x=other_beam_sigma_x,
-                                        sigma_y=other_beam_sigma_y)
+            self.update_from_other_beam(
+                other_particles,
+                other_beam_sigma_x=other_beam_sigma_x,
+                other_beam_sigma_y=other_beam_sigma_y)
         else:
             # sizes stored now, loaded bunches later (update_from_other_beam)
             if other_beam_sigma_x is not None:
@@ -179,8 +206,9 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
             f'for {num_bunches} bunches.')
         getattr(self, name)[:value.size] = self._arr2ctx(value)
 
-    def update_from_other_beam(self, other_particles, sigma_x=None,
-                               sigma_y=None):
+    def update_from_other_beam(self, other_particles,
+                               other_beam_sigma_x=None,
+                               other_beam_sigma_y=None):
 
         """
         Load the centroid, longitudinal position and population of the bunches
@@ -193,9 +221,9 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
         elements so that both kicks are computed from the bunch positions at the
         same turn (strong-strong simultaneity).
 
-        Note: if ``sigma_x``/``sigma_y`` are not given the stored sizes are
-        kept -- only valid if the set (and zeta ordering) of bunches is
-        unchanged since the sizes were last set.
+        Note: if ``other_beam_sigma_x``/``other_beam_sigma_y`` are not
+        given the stored sizes are kept -- only valid if the set (and zeta
+        ordering) of bunches is unchanged since the sizes were last set.
         """
 
         ctx2np = self._buffer.context.nparray_from_context_array
@@ -225,8 +253,8 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
         self.other_beam_y[:n] = self._arr2ctx(y[order])
         self.other_beam_num_particles[:n] = self._arr2ctx(weight[order])
 
-        for name, value in (('other_beam_sigma_x', sigma_x),
-                            ('other_beam_sigma_y', sigma_y)):
+        for name, value in (('other_beam_sigma_x', other_beam_sigma_x),
+                            ('other_beam_sigma_y', other_beam_sigma_y)):
             if value is None:
                 continue
             value = np.atleast_1d(np.asarray(value, dtype=float))
@@ -236,13 +264,3 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
                 f'`{name}` has {value.size} entries but the opposing beam has '
                 f'{n} bunches.')
             getattr(self, name)[:n] = self._arr2ctx(value[order])
-
-    def get_sigma_x(self):
-        """Per-bunch horizontal size sigma_x of the opposing bunches."""
-        ctx2np = self._buffer.context.nparray_from_context_array
-        return ctx2np(self.other_beam_sigma_x)[:self.num_other_bunches].copy()
-
-    def get_sigma_y(self):
-        """Per-bunch vertical size sigma_y of the opposing bunches."""
-        ctx2np = self._buffer.context.nparray_from_context_array
-        return ctx2np(self.other_beam_sigma_y)[:self.num_other_bunches].copy()
