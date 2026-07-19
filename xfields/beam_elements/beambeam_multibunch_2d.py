@@ -251,24 +251,34 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
             f'for {num_bunches} bunches.')
         getattr(self, name)[:value.size] = self._arr2ctx(value)
 
-    def update_from_own_beam(self, zeta, sigma_x=None, sigma_y=None):
-        """Set THIS (the tracked) beam's per-bunch zeta grid ``own_beam_zeta``
-        (used by the kernel to match each tracked particle to its own bunch) and,
-        optionally, the own per-bunch sizes ``sigma_x``/``sigma_y`` (scalar
-        broadcast). The three are sorted together along ``zeta`` (the kernel
-        partner search is a binary search). The OWN-beam analogue of
-        :meth:`update_from_other_beam`; here x/y/population come from the tracked
-        particles, so only zeta and the sizes are stored."""
-        zeta = np.atleast_1d(np.asarray(zeta, dtype=float))
-        n = len(zeta)
-        capacity = len(self.own_beam_zeta)
-        if n > capacity:
-            raise ValueError(
-                f'This beam has {n} bunches but the element was allocated for '
-                f'{capacity}. Increase `num_own_bunches`.')
-        order = np.argsort(zeta, kind='stable')
-        self.num_own_bunches = n
-        self.own_beam_zeta[:n] = self._arr2ctx(zeta[order])
+    def update_from_own_beam(self, zeta=None, sigma_x=None, sigma_y=None):
+        """Set THIS (the tracked) beam's per-bunch data. With ``zeta`` given, set
+        the per-bunch zeta grid ``own_beam_zeta`` (used by the kernel to match
+        each tracked particle to its own bunch) and, optionally, the own sizes
+        ``sigma_x``/``sigma_y`` -- the three are sorted together along ``zeta``
+        (the kernel partner search is a binary search). With ``zeta=None`` only
+        the sizes are updated, for the already-registered own bunches (the first
+        ``num_own_bunches`` entries, in ``own_beam_zeta`` order), e.g. to feed the
+        dynamic-beta sizes each iteration. A scalar size is broadcast. The
+        OWN-beam analogue of :meth:`update_from_other_beam`; here x/y/population
+        come from the tracked particles, so only zeta and the sizes are stored.
+        Writes to a prefix, so it is robust to the array capacity exceeding the
+        active bunch count (a setup sized for a larger filling than the solved
+        one)."""
+        if zeta is not None:
+            zeta = np.atleast_1d(np.asarray(zeta, dtype=float))
+            n = len(zeta)
+            capacity = len(self.own_beam_zeta)
+            if n > capacity:
+                raise ValueError(
+                    f'This beam has {n} bunches but the element was allocated '
+                    f'for {capacity}. Increase `num_own_bunches`.')
+            order = np.argsort(zeta, kind='stable')
+            self.num_own_bunches = n
+            self.own_beam_zeta[:n] = self._arr2ctx(zeta[order])
+        else:
+            n = int(self.num_own_bunches)
+            order = np.arange(n)   # keep the existing own_beam_zeta order
         for name, value in (('sigma_x', sigma_x), ('sigma_y', sigma_y)):
             if value is None:
                 continue
