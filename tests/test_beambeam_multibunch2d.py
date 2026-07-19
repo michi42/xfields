@@ -117,6 +117,59 @@ def test_multibunch_coherent(test_context):
 
 
 @for_all_test_contexts
+def test_multibunch_coherent_per_bunch_own_size(test_context):
+    # coherent=True with PER-BUNCH own sizes: sigma_x/sigma_y are indexed by THIS
+    # beam (own_beam_zeta), other_beam_sigma_x/y by the opposing beam; the kernel
+    # matches the tracked particle to its own bunch AND to its opposing partner
+    # independently. The own- and opposing-bunch INDEXING differs here: 2 own
+    # bunches at slots [0, 20] with offset +10 pair with opposing bunches at
+    # slots 10 (index 0) and 30 (index 2) among opposing slots [10, 20, 30, 40].
+    off = 10
+    opp_slots = np.array([10, 20, 30, 40])
+    opp = xp.Particles(_context=test_context, p0c=P0C, q0=1,
+                       mass0=xp.PROTON_MASS_EV,
+                       x=[2e-4, 1e-4, -1e-4, 3e-4], y=[-1e-4, 0.5e-4, 2e-4, 1e-4],
+                       zeta=opp_slots * DZ, weight=INTENSITY)
+    oth_sx = np.array([1.0, 1.2, 0.7, 0.9]) * SIGMA
+    oth_sy = np.array([0.6, 1.1, 1.5, 0.8]) * SIGMA
+
+    own_slots = np.array([0, 20])
+    own_sx = np.array([0.8, 1.4]) * SIGMA
+    own_sy = np.array([1.3, 1.2]) * SIGMA
+    bb = xf.BeamBeamBiGaussianMultibunch2D(
+        other_particles=opp, zeta_offset=off * DZ,
+        zeta_match_tol=0.4 * DZ, zeta_period=N_SLOTS * DZ,
+        other_beam_q0=1.0, other_beam_beta0=BETA0, coherent=True,
+        own_beam_zeta=own_slots * DZ, sigma_x=own_sx, sigma_y=own_sy,
+        other_beam_sigma_x=oth_sx, other_beam_sigma_y=oth_sy,
+        _context=test_context)
+    assert bb.num_own_bunches == 2
+    assert np.allclose(bb.sigma_x, own_sx, rtol=1e-15)
+    assert np.allclose(bb.sigma_y, own_sy, rtol=1e-15)
+
+    # own bunch k (slot own_slots[k]) pairs with opposing bunch i_opp
+    for k, slot in enumerate(own_slots):
+        i_opp = int(np.where(opp_slots == slot + off)[0][0])
+        p = xp.Particles(_context=test_context, p0c=P0C, q0=1,
+                         mass0=xp.PROTON_MASS_EV, x=1e-3, y=4e-4, zeta=slot * DZ)
+        p_ref = p.copy()
+        bb.track(p)
+        bb_ref = xf.BeamBeamBiGaussian2D(
+            other_beam_q0=1.0, other_beam_beta0=BETA0,
+            other_beam_num_particles=INTENSITY,
+            other_beam_Sigma_11=own_sx[k]**2 + oth_sx[i_opp]**2,
+            other_beam_Sigma_33=own_sy[k]**2 + oth_sy[i_opp]**2,
+            other_beam_shift_x=float(opp.x[i_opp]),
+            other_beam_shift_y=float(opp.y[i_opp]),
+            _context=test_context)
+        bb_ref.track(p_ref)
+        p.move(_context=None)
+        p_ref.move(_context=None)
+        assert np.allclose(p.px, p_ref.px, rtol=1e-13, atol=1e-30)
+        assert np.allclose(p.py, p_ref.py, rtol=1e-13, atol=1e-30)
+
+
+@for_all_test_contexts
 def test_multibunch_zeta_period(test_context):
     # Opposing bunches at slots 200..204 with distinct offsets so the matched
     # partner can be identified through the kick it produces.

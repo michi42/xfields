@@ -46,8 +46,15 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
         'other_beam_beta0': xo.Float64,
 
         'coherent': xo.Int64,
-        'sigma_x': xo.Float64,
-        'sigma_y': xo.Float64,
+
+        # This (the tracked/OWN) beam's per-bunch transverse sizes, indexed by
+        # the OWN beam bunches (like the tracked particles' own populations).
+        # The kernel matches each tracked particle to its own bunch on
+        # `own_beam_zeta`; a single own bunch means a uniform size (index 0).
+        'num_own_bunches': xo.Int64,
+        'own_beam_zeta': xo.Float64[:],
+        'sigma_x': xo.Float64[:],
+        'sigma_y': xo.Float64[:],
 
         'min_sigma_diff': xo.Float64,
 
@@ -79,6 +86,8 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
                     other_beam_beta0=1,
 
                     coherent=False,
+                    num_own_bunches=None,
+                    own_beam_zeta=None,
                     sigma_x=None,
                     sigma_y=None,
 
@@ -117,8 +126,23 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
                 model) the effective size is the convolution
                 ``sqrt(sigma_own**2 + sigma_other**2)`` and ``sigma_x``/
                 ``sigma_y`` are required.
-            sigma_x, sigma_y (float): Transverse sizes of this (the tracked)
-                beam at the element, used only with ``coherent=True``.
+            num_own_bunches (int): Number of bunches of THIS (the tracked) beam,
+                to allocate the own per-bunch arrays. Inferred from
+                ``own_beam_zeta`` (or 1) if not given.
+            own_beam_zeta (float array): Longitudinal positions (bunch labels)
+                of this beam's bunches, one per bunch, used by the kernel to
+                match each tracked particle to its own bunch (and hence its own
+                size) -- the OWN-beam analogue of ``other_beam_zeta``. Required
+                for per-bunch own sizes; omit it (single own bunch) for a
+                uniform own size.
+            sigma_x, sigma_y (float or float array): Transverse sizes of THIS
+                (the tracked) beam at the element, used only with
+                ``coherent=True``. Indexed by the OWN beam bunches (aligned with
+                ``own_beam_zeta``), just like the tracked particles carry their
+                own populations; a scalar is broadcast (uniform own size). The
+                opposing sizes are ``other_beam_sigma_x``/``other_beam_sigma_y``
+                (indexed by the OTHER beam); the kernel convolves the matched
+                pair.
             other_particles (xpart.Particles): Particles object of the opposing
                 beam in which each active macroparticle represents one bunch.
                 Its centroids (``x``, ``y``), longitudinal positions (``zeta``)
@@ -154,7 +178,16 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
         assert num_bunches >= n_active, (
             '`num_bunches` must be >= the number of bunches in `other_particles`')
 
+        # Own beam allocation (this beam's bunches: own zeta grid + own sizes)
+        if num_own_bunches is None:
+            num_own_bunches = (len(np.atleast_1d(own_beam_zeta))
+                               if own_beam_zeta is not None else 1)
+        num_own_bunches = max(int(num_own_bunches), 1)
+
         self.xoinitialize(
+            own_beam_zeta=num_own_bunches,
+            sigma_x=num_own_bunches,
+            sigma_y=num_own_bunches,
             other_beam_zeta=num_bunches,
             other_beam_x=num_bunches,
             other_beam_y=num_bunches,
@@ -177,8 +210,20 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
                 '`sigma_x` and `sigma_y` (own beam sizes) are required for '
                 'the coherent (rigid-bunch) mode.')
         self.coherent = bool(coherent)
-        self.sigma_x = 0. if sigma_x is None else sigma_x
-        self.sigma_y = 0. if sigma_y is None else sigma_y
+        # Own per-bunch sizes are indexed by THIS beam. With an explicit own
+        # zeta grid the kernel matches the tracked particle to its bunch; else a
+        # single (uniform) own size broadcast over the one own bunch.
+        self.num_own_bunches = 1
+        if own_beam_zeta is not None:
+            self.update_from_own_beam(
+                own_beam_zeta,
+                sigma_x=0. if sigma_x is None else sigma_x,
+                sigma_y=0. if sigma_y is None else sigma_y)
+        else:
+            self._set_per_bunch('sigma_x', 0. if sigma_x is None else sigma_x,
+                                num_own_bunches)
+            self._set_per_bunch('sigma_y', 0. if sigma_y is None else sigma_y,
+                                num_own_bunches)
 
         self.min_sigma_diff = min_sigma_diff
 
@@ -205,6 +250,35 @@ class BeamBeamBiGaussianMultibunch2D(xt.BeamElement):
             f'`{name}` has {value.size} entries but the element was allocated '
             f'for {num_bunches} bunches.')
         getattr(self, name)[:value.size] = self._arr2ctx(value)
+
+    def update_from_own_beam(self, zeta, sigma_x=None, sigma_y=None):
+        """Set THIS (the tracked) beam's per-bunch zeta grid ``own_beam_zeta``
+        (used by the kernel to match each tracked particle to its own bunch) and,
+        optionally, the own per-bunch sizes ``sigma_x``/``sigma_y`` (scalar
+        broadcast). The three are sorted together along ``zeta`` (the kernel
+        partner search is a binary search). The OWN-beam analogue of
+        :meth:`update_from_other_beam`; here x/y/population come from the tracked
+        particles, so only zeta and the sizes are stored."""
+        zeta = np.atleast_1d(np.asarray(zeta, dtype=float))
+        n = len(zeta)
+        capacity = len(self.own_beam_zeta)
+        if n > capacity:
+            raise ValueError(
+                f'This beam has {n} bunches but the element was allocated for '
+                f'{capacity}. Increase `num_own_bunches`.')
+        order = np.argsort(zeta, kind='stable')
+        self.num_own_bunches = n
+        self.own_beam_zeta[:n] = self._arr2ctx(zeta[order])
+        for name, value in (('sigma_x', sigma_x), ('sigma_y', sigma_y)):
+            if value is None:
+                continue
+            value = np.atleast_1d(np.asarray(value, dtype=float))
+            if value.size == 1:
+                value = np.full(n, value[0])
+            assert value.size == n, (
+                f'`{name}` has {value.size} entries but this beam has {n} '
+                f'bunches.')
+            getattr(self, name)[:n] = self._arr2ctx(value[order])
 
     def update_from_other_beam(self, other_particles,
                                other_beam_sigma_x=None,
